@@ -96,7 +96,7 @@ def generate_kdf(Z, TH: bytes):
         "K_g2n_mac": _hmac(K_master, b"gateway-to-node MAC" + TH),
         "K_n2g_enc": _hmac(K_master, b"node-to-gate encryption" + TH),
         "K_n2g_mac": _hmac(K_master, b"node-to-gate MAC" + TH),
-        "session_id": _hmac(K_master, b"session identifier" + TH)
+        "session_id": _hmac(K_master, b"session identifier" + TH)[:8]
     }
 
 def generate_keys(credentials: FreshCredentials, peer_pubk, transcript: bytes):
@@ -166,11 +166,8 @@ def main():
     accept_session(final_response["signature"], node_th, TRANSCRIPT_ROLE_GATEWAY, final_response["identity"], TRANSCRIPT_ROLE_GATEWAY)
     node_keys = generate_keys(node_credentials, verify_public_key(node_credentials.public_key), node_th)
 
-    # Handshake complete, check if keys match
-    print("Handshake complete")
-    print(f"Gateway keys: {gateway_keys}")
-    print(f"Node keys: {node_keys}")
-    print(f"Keys match: {gateway_keys == node_keys}")
+    # Handshake complete
+    return gateway_keys, node_keys
 
 if __name__ == "__main__":
     main()

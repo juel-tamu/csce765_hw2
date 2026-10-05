@@ -41,13 +41,10 @@ def _hmac(key, data):
 
 # Classes
 class FreshCredentials:
-    private_key = DIFFIE_PARAMETERS.generate_private_key()
-    public_key = DIFFIE_PARAMETERS.generate_private_key().public_key().public_numbers().y.to_bytes(384, "big")
-    nonce = os.urandom(16)
-    # private_key_node = DIFFIE_PARAMETERS.generate_private_key()
-    # public_key_node = DIFFIE_PARAMETERS.generate_private_key().public_key()
-    # nonce_node = os.urandom(16)
-    # shared_key = private_key_gateway.exchange(public_key_node)
+    def __init__(self):
+        self.private_key = DIFFIE_PARAMETERS.generate_private_key()
+        self.public_key = self.private_key.public_key().public_numbers().y.to_bytes(384, "big")
+        self.nonce = os.urandom(16)
 
 # Functions
 def assemble_transcript(idnetity_1, identity_2, gateway_pubk, node_pubk, gateway_nonce, node_nonce):
@@ -70,7 +67,7 @@ def decode_transcript(transcript: bytes):
         fields.append(transcript[i: i + size])
         i += size
 
-    if len(fields) < 8:
+    if len(fields) != 8:
         raise ValueError("Incorrect number of fields in transcript declared")
     return fields
 
@@ -80,10 +77,10 @@ def hash_transcript(transcript: bytes):
         raise ValueError("Malformed transcript")
     return hashlib.sha256(transcript).digest()
 
-def sign_transcript(transcript: bytes, role: str):
-    signing_key = RSA_PRIVATE_KEY_GATEWAY if role.lower() == "gateway" else RSA_PRIVATE_KEY_NODE
+def sign_transcript(transcript: bytes, role: bytes):
+    signing_key = RSA_PRIVATE_KEY_GATEWAY if role == TRANSCRIPT_ROLE_GATEWAY else RSA_PRIVATE_KEY_NODE
     return signing_key.sign(
-        role.lower() + transcript,
+        role + transcript,
         PSS_PADDING,
         hashes.SHA256()
     )
@@ -94,22 +91,23 @@ def generate_kdf(Z, TH: bytes):
     return {
         "K_g2n_enc": _hmac(K_master, b"gateway-to-node encryption" + TH),
         "K_g2n_mac": _hmac(K_master, b"gateway-to-node MAC" + TH),
-        "K_n2g_enc": _hmac(K_master, b"node-to-gate encryption" + TH),
-        "K_n2g_mac": _hmac(K_master, b"node-to-gate MAC" + TH),
+        "K_n2g_enc": _hmac(K_master, b"node-to-gateway encryption" + TH),
+        "K_n2g_mac": _hmac(K_master, b"node-to-gateway MAC" + TH),
         "session_id": _hmac(K_master, b"session identifier" + TH)[:8]
     }
 
 def generate_keys(credentials: FreshCredentials, peer_pubk, transcript: bytes):
     Z = credentials.private_key.exchange(peer_pubk).rjust(384, b"\x00")
+    credentials.private_key = None
     return generate_kdf(Z, transcript)
 
-def verify_signature(signature: bytes, transcript: bytes, role: str):
-    public_key = RSA_PUBLIC_KEY_GATEWAY if role.lower() == "node" else RSA_PUBLIC_KEY_NODE
+def verify_signature(signature: bytes, transcript: bytes, role: bytes):
+    public_key = RSA_PUBLIC_KEY_GATEWAY if role == TRANSCRIPT_ROLE_GATEWAY else RSA_PUBLIC_KEY_NODE
 
     try:
         public_key.verify(
             signature,
-            role.lower() + transcript,
+            role + transcript,
             PSS_PADDING,
             hashes.SHA256()
         )
@@ -123,10 +121,13 @@ def verify_message_role_and_iden(msg, expected_role):
     if msg["identity"] != identity:
         raise ValueError("Message identity does not match expected")
 
-def verify_public_key(pubkey_bytes: int):
+def verify_public_key(pubkey_bytes: bytes):
     if len(pubkey_bytes) != 384:
         raise ValueError("Public key length does not match expected")
     pubkey = int.from_bytes(pubkey_bytes, "big")
+    p = DIFFIE_PARAMETERS.parameter_numbers().p
+    if not 1 < pubkey < p - 1:
+        raise ValueError("Public key is out of range")
     return dh.DHPublicNumbers(pubkey, DIFFIE_PARAMETERS.parameter_numbers()).public_key()
 
 def accept_session(signature: bytes, transcript: bytes, role: str, received_peer_id, expected_peer_id):
@@ -141,7 +142,7 @@ def main():
 
     # Sent to node
     verify_message_role_and_iden(initial_message, "Gateway")
-    verify_public_key(initial_message["pub_key"])
+    gateway_pubk = verify_public_key(initial_message["pub_key"])
 
     node_credentials = FreshCredentials()
     transcript_hash = assemble_transcript(initial_message["identity"], TRANSCRIPT_ROLE_NODE, initial_message["pub_key"], node_credentials.public_key, initial_message["nonce"], node_credentials.nonce)
@@ -164,7 +165,7 @@ def main():
     # Node responds for final part of handshake
     verify_message_role_and_iden(final_response, "Gateway")
     accept_session(final_response["signature"], node_th, TRANSCRIPT_ROLE_GATEWAY, final_response["identity"], TRANSCRIPT_ROLE_GATEWAY)
-    node_keys = generate_keys(node_credentials, verify_public_key(node_credentials.public_key), node_th)
+    node_keys = generate_keys(node_credentials, gateway_pubk, node_th)
 
     # Handshake complete
     return gateway_keys, node_keys

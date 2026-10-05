@@ -17,8 +17,8 @@ Requires Python 3 and OpenSSL 3.0 or newer.
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-python -m pip install --upgrade pip
-python -m pip install cryptography==49.0.0 pytest==9.1.1
+python3 -m pip install --upgrade pip
+python3 -m pip install cryptography==49.0.0 pytest==9.1.1
 ```
 
 `ffdhe3072.pem` is included. To regenerate it:
